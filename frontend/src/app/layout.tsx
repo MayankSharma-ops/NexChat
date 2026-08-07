@@ -7,6 +7,7 @@ import { CallProvider } from '@/context/CallContext';
 import CallOverlay from '@/components/Call/CallOverlay';
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://chat.gathor.online'),
   title: 'Gathor Chat',
   icons: {
     icon: '/logo.png',
