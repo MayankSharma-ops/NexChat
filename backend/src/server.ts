@@ -14,7 +14,11 @@ import { initSocket } from './socket.js';
 dotenv.config();
 
 const app = express();
-app.set('trust proxy', true);   // Trust all proxies in Render's chain
+// Trust only the nearest reverse proxy in production. Trusting every proxy lets
+// clients spoof X-Forwarded-For and bypass IP-based rate limits.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 const httpServer = createServer(app);
 
 // Security

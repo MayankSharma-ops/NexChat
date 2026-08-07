@@ -10,6 +10,7 @@ backend/.env
 frontend/.env.local
 *.log
 .DS_Store
+**/*.tsbuildinfo
 
 frontend/out
 # or simply
