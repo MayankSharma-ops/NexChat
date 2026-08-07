@@ -481,23 +481,41 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (!isCurrentCall(data.callId)) return;
       const pc = peerConnection.current;
       if (!pc) return finishWithError('The local call connection is unavailable.');
+
+      // The receiver may answer before call_ringing reaches this socket. The
+      // accepted event also confirms that the backend call record exists.
+      flushLocalCandidates(data.callId);
+      if (callStateRef.current !== 'connected') updateCallState('connecting');
+
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        if (operationRef.current !== data.callId) return;
         await drainIceCandidates(pc, data.callId);
+        if (operationRef.current !== data.callId) return;
+
         if (data.callType === 'audio') {
           setCallType('audio');
           const stream = localStreamRef.current;
           const sender = pc.getSenders().find((entry) => entry.track?.kind === 'video');
           if (sender) await sender.replaceTrack(null);
+          if (operationRef.current !== data.callId) return;
           stream?.getVideoTracks().forEach((track) => {
             stream.removeTrack(track);
             track.stop();
           });
           if (stream) setLocalStream(new MediaStream(stream.getTracks()));
         }
-        updateCallState('connecting');
-        startConnectionDeadline(data.callId);
-      } catch (error) {
+
+        // connectionstatechange may already have advanced the call to connected
+        // while the awaits above were running. Never regress it to connecting.
+        if (pc.connectionState === 'connected') {
+          updateCallState('connected');
+          startDurationTimer();
+        } else {
+          startConnectionDeadline(data.callId);
+        }
+      } catch {
+        if (operationRef.current !== data.callId) return;
         socket.emit('end_call', { callId: data.callId });
         finishWithError('Failed to establish the call connection.');
       }
@@ -563,7 +581,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off('call_error', handleCallError);
       socket.off('webrtc_ice_candidate', handleIceCandidate);
     };
-  }, [drainIceCandidates, finishWithError, flushLocalCandidates, setLocalStream, socket, startConnectionDeadline, updateCallId, updateCallState, updatePeerId]);
+  }, [drainIceCandidates, finishWithError, flushLocalCandidates, setLocalStream, socket, startConnectionDeadline, startDurationTimer, updateCallId, updateCallState, updatePeerId]);
 
   useEffect(() => {
     if (!isConnected && callStateRef.current !== 'idle') {

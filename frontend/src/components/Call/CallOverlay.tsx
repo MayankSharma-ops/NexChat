@@ -133,7 +133,7 @@ export default function CallOverlay() {
   // ═════════════════════════════════════════════════════════════════
   //  OUTGOING CALL (CALLING / WAITING)
   // ═════════════════════════════════════════════════════════════════
-  if (callState === 'calling') {
+  if (callState === 'calling' || callState === 'connecting') {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md animate-fade-in">
         <div className="text-center">
@@ -159,7 +159,9 @@ export default function CallOverlay() {
           {callError ? (
             <p className="text-red-400 text-sm mb-6">{callError}</p>
           ) : (
-            <p className="text-white/40 text-sm mb-8 animate-pulse">Ringing…</p>
+            <p className="text-white/40 text-sm mb-8 animate-pulse">
+              {callState === 'connecting' ? 'Connecting…' : 'Ringing…'}
+            </p>
           )}
 
           <button
