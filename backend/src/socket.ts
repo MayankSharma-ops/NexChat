@@ -23,9 +23,17 @@ interface CallRecord {
   state: CallState;
 }
 
+interface PendingCall {
+  callerId: string;
+  receiverId: string;
+  callerSocketId: string;
+  cancelled: boolean;
+}
+
 let io: Server;
 
 const callsById = new Map<string, CallRecord>();
+const pendingCallsById = new Map<string, PendingCall>();
 const userCallIds = new Map<string, string>();
 const callTimeouts = new Map<string, NodeJS.Timeout>();
 const onlineUsers = new Set<string>();
@@ -54,6 +62,7 @@ const answerCallSchema = z
     callId: uuidSchema,
     callerId: uuidSchema.optional(),
     answer: sessionDescriptionSchema('answer'),
+    callType: z.enum(['audio', 'video']),
   })
   .strict();
 
@@ -119,6 +128,12 @@ function validationMessage(eventName: string, error: z.ZodError) {
   const issue = error.issues[0];
   const field = issue?.path.join('.') || 'payload';
   return `Invalid ${eventName} payload: ${field} ${issue?.message ?? 'is invalid'}`;
+}
+
+function getPayloadCallId(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object' || !('callId' in payload)) return undefined;
+  const parsed = uuidSchema.safeParse((payload as { callId?: unknown }).callId);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function ownsParticipantSocket(
@@ -336,7 +351,11 @@ export function initSocket(httpServer: HttpServer) {
     socket.on('call_user', async (payload: unknown) => {
       const parsed = callUserSchema.safeParse(payload);
       if (!parsed.success) {
-        return emitCallError(socket, validationMessage('call_user', parsed.error));
+        return emitCallError(
+          socket,
+          validationMessage('call_user', parsed.error),
+          getPayloadCallId(payload)
+        );
       }
 
       const { callId, receiverId, offer, callType } = parsed.data;
@@ -344,7 +363,7 @@ export function initSocket(httpServer: HttpServer) {
       if (userId === receiverId) {
         return emitCallError(socket, 'You cannot call yourself', callId);
       }
-      if (callsById.has(callId)) {
+      if (callsById.has(callId) || pendingCallsById.has(callId)) {
         return emitCallError(socket, 'That call ID is already in use', callId);
       }
       if (userCallIds.has(userId)) {
@@ -356,6 +375,13 @@ export function initSocket(httpServer: HttpServer) {
       if (!isUserOnline(receiverId)) {
         return emitCallError(socket, 'User is offline', callId);
       }
+
+      pendingCallsById.set(callId, {
+        callerId: userId,
+        receiverId,
+        callerSocketId: socket.id,
+        cancelled: false,
+      });
 
       try {
         const [firstUserId, secondUserId] =
@@ -371,15 +397,20 @@ export function initSocket(httpServer: HttpServer) {
           [userId, firstUserId, secondUserId]
         );
 
+        const pendingCall = pendingCallsById.get(callId);
+        if (!pendingCall || pendingCall.cancelled || !socket.connected) {
+          pendingCallsById.delete(callId);
+          return;
+        }
+
         if (!callerInfo.rows.length) {
+          pendingCallsById.delete(callId);
           return emitCallError(socket, 'You can only call an existing friend', callId);
         }
 
-        // No awaits are allowed between this recheck and reservation. This makes
-        // concurrent calls compete atomically in this process.
-        if (!socket.connected) {
-          return;
-        }
+        // No awaits are allowed between releasing the pending marker and the
+        // final recheck/reservation, so cancellation cannot interleave here.
+        pendingCallsById.delete(callId);
         if (callsById.has(callId)) {
           return emitCallError(socket, 'That call ID is already in use', callId);
         }
@@ -432,6 +463,7 @@ export function initSocket(httpServer: HttpServer) {
         callTimeouts.set(callId, timeout);
         console.log(`${userId} calling ${receiverId} (${callType}, ${callId})`);
       } catch (err: unknown) {
+        pendingCallsById.delete(callId);
         const message = err instanceof Error ? err.message : 'Unknown error';
         console.error('call_user error:', message);
         emitCallError(socket, 'Unable to start the call due to a database error', callId);
@@ -441,17 +473,24 @@ export function initSocket(httpServer: HttpServer) {
     socket.on('answer_call', (payload: unknown) => {
       const parsed = answerCallSchema.safeParse(payload);
       if (!parsed.success) {
-        return emitCallError(socket, validationMessage('answer_call', parsed.error));
+        return emitCallError(
+          socket,
+          validationMessage('answer_call', parsed.error),
+          getPayloadCallId(payload)
+        );
       }
 
-      const { callId, answer } = parsed.data;
+      const { callId, answer, callType } = parsed.data;
       const record = callsById.get(callId);
-      if (!record) return emitCallError(socket, 'Call not found or no longer active', callId);
+      if (!record) return;
       if (userId !== record.receiverId) {
         return emitCallError(socket, 'Only the called user can answer this call', callId);
       }
       if (record.state !== 'ringing') {
         return emitCallError(socket, 'This call has already been answered', callId);
+      }
+      if (record.callType === 'audio' && callType === 'video') {
+        return emitCallError(socket, 'An audio call cannot be upgraded to video while answering', callId);
       }
       if (!ownsParticipantSocket(record, userId, socket.id, true)) {
         return emitCallError(socket, 'This socket is not a participant in the call', callId);
@@ -459,6 +498,7 @@ export function initSocket(httpServer: HttpServer) {
 
       clearCallTimeout(callId);
       record.receiverSocketId = socket.id;
+      record.callType = callType;
       record.state = 'active';
 
       io.to(record.callerSocketId).emit('call_accepted', {
@@ -480,7 +520,11 @@ export function initSocket(httpServer: HttpServer) {
     socket.on('reject_call', (payload: unknown) => {
       const parsed = rejectCallSchema.safeParse(payload);
       if (!parsed.success) {
-        return emitCallError(socket, validationMessage('reject_call', parsed.error));
+        return emitCallError(
+          socket,
+          validationMessage('reject_call', parsed.error),
+          getPayloadCallId(payload)
+        );
       }
 
       const { callId } = parsed.data;
@@ -513,12 +557,18 @@ export function initSocket(httpServer: HttpServer) {
     socket.on('webrtc_ice_candidate', (payload: unknown) => {
       const parsed = icePayloadSchema.safeParse(payload);
       if (!parsed.success) {
-        return emitCallError(socket, validationMessage('webrtc_ice_candidate', parsed.error));
+        return emitCallError(
+          socket,
+          validationMessage('webrtc_ice_candidate', parsed.error),
+          getPayloadCallId(payload)
+        );
       }
 
       const { callId, candidate } = parsed.data;
       const record = callsById.get(callId);
-      if (!record) return emitCallError(socket, 'Call not found or no longer active', callId);
+      // ICE can arrive after a timeout/cancel because gathering is asynchronous.
+      // Treat that as a harmless stale event instead of failing the whole call UI.
+      if (!record) return;
       if (userId !== record.callerId && userId !== record.receiverId) {
         return emitCallError(socket, 'You are not a participant in this call', callId);
       }
@@ -536,12 +586,28 @@ export function initSocket(httpServer: HttpServer) {
     socket.on('end_call', (payload: unknown) => {
       const parsed = endCallSchema.safeParse(payload);
       if (!parsed.success) {
-        return emitCallError(socket, validationMessage('end_call', parsed.error));
+        return emitCallError(
+          socket,
+          validationMessage('end_call', parsed.error),
+          getPayloadCallId(payload)
+        );
       }
 
       const { callId } = parsed.data;
       const record = callsById.get(callId);
-      if (!record) return emitCallError(socket, 'Call not found or no longer active', callId);
+      // Ending a call is idempotent. If authorization is still pending, mark it
+      // cancelled so the async database result cannot create a ghost call.
+      if (!record) {
+        const pendingCall = pendingCallsById.get(callId);
+        if (
+          pendingCall &&
+          pendingCall.callerId === userId &&
+          pendingCall.callerSocketId === socket.id
+        ) {
+          pendingCall.cancelled = true;
+        }
+        return;
+      }
       if (userId !== record.callerId && userId !== record.receiverId) {
         return emitCallError(socket, 'You are not a participant in this call', callId);
       }
@@ -566,6 +632,12 @@ export function initSocket(httpServer: HttpServer) {
     });
 
     socket.on('disconnect', (reason) => {
+      for (const pendingCall of pendingCallsById.values()) {
+        if (pendingCall.callerId === userId && pendingCall.callerSocketId === socket.id) {
+          pendingCall.cancelled = true;
+        }
+      }
+
       const callId = userCallIds.get(userId);
       const record = callId ? callsById.get(callId) : undefined;
       const ownsCall =

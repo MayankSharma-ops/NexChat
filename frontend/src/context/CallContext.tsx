@@ -75,6 +75,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const operationRef = useRef<string | null>(null);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const iceCandidateQueue = useRef<QueuedCandidate[]>([]);
+  const localCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
+  const signalingReadyRef = useRef(false);
   const durationTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,6 +138,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setLocalStream(null);
     setRemoteStream(null);
     iceCandidateQueue.current = [];
+    localCandidateQueue.current = [];
+    signalingReadyRef.current = false;
   }, [clearCallTimers, setLocalStream, setRemoteStream]);
 
   const resetCall = useCallback(() => {
@@ -206,14 +210,28 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const sendLocalCandidate = useCallback((activeCallId: string, candidate: RTCIceCandidateInit) => {
+    if (!socket || callIdRef.current !== activeCallId) return;
+    socket.emit('webrtc_ice_candidate', { callId: activeCallId, candidate });
+  }, [socket]);
+
+  const flushLocalCandidates = useCallback((activeCallId: string) => {
+    if (callIdRef.current !== activeCallId) return;
+    signalingReadyRef.current = true;
+    const candidates = localCandidateQueue.current;
+    localCandidateQueue.current = [];
+    candidates.forEach((candidate) => sendLocalCandidate(activeCallId, candidate));
+  }, [sendLocalCandidate]);
+
   const createPeer = useCallback((activeCallId: string) => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pc.onicecandidate = (event) => {
-      if (event.candidate && socket && callIdRef.current === activeCallId) {
-        socket.emit('webrtc_ice_candidate', {
-          callId: activeCallId,
-          candidate: event.candidate.toJSON(),
-        });
+      if (!event.candidate || callIdRef.current !== activeCallId) return;
+      const candidate = event.candidate.toJSON();
+      if (signalingReadyRef.current) {
+        sendLocalCandidate(activeCallId, candidate);
+      } else {
+        localCandidateQueue.current.push(candidate);
       }
     };
     pc.ontrack = (event) => {
@@ -243,7 +261,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     };
     peerConnection.current = pc;
     return pc;
-  }, [finishWithError, setRemoteStream, socket, startDurationTimer, updateCallState]);
+  }, [finishWithError, sendLocalCandidate, setRemoteStream, socket, startDurationTimer, updateCallState]);
 
   const drainIceCandidates = useCallback(async (pc: RTCPeerConnection, activeCallId: string) => {
     const matching = iceCandidateQueue.current.filter((entry) => entry.callId === activeCallId);
@@ -267,6 +285,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     const activeCallId = crypto.randomUUID();
     operationRef.current = activeCallId;
+    signalingReadyRef.current = false;
+    localCandidateQueue.current = [];
     updateCallId(activeCallId);
     updatePeerId(friendId);
     setPeerName(friendName);
@@ -306,6 +326,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     const call = incomingCall;
     operationRef.current = call.callId;
+    signalingReadyRef.current = true;
+    localCandidateQueue.current = [];
     stopRingtone();
     setIncomingCall(null);
     setCallError(null);
@@ -419,7 +441,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!socket) return;
 
     const isCurrentCall = (eventCallId?: string) =>
-      !eventCallId || eventCallId === callIdRef.current;
+      Boolean(eventCallId && eventCallId === callIdRef.current);
 
     const handleIncomingCall = (data: IncomingCallData) => {
       if (callStateRef.current !== 'idle') return;
@@ -447,6 +469,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const handleCallRinging = (data: { callId: string }) => {
       if (data.callId !== operationRef.current) return;
       updateCallId(data.callId);
+      flushLocalCandidates(data.callId);
     };
 
     const handleCallAccepted = async (data: {
@@ -497,7 +520,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
       finishWithError(message);
     };
     const handleCallError = (data: { callId?: string; message: string }) => {
-      if (callIdRef.current && !isCurrentCall(data.callId)) return;
+      if (callStateRef.current === 'idle' || callStateRef.current === 'ended') return;
+      if (!isCurrentCall(data.callId)) return;
       finishWithError(data.message || 'Call failed.');
     };
     const handleIceCandidate = async (data: {
@@ -539,7 +563,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off('call_error', handleCallError);
       socket.off('webrtc_ice_candidate', handleIceCandidate);
     };
-  }, [drainIceCandidates, finishWithError, setLocalStream, socket, startConnectionDeadline, updateCallId, updateCallState, updatePeerId]);
+  }, [drainIceCandidates, finishWithError, flushLocalCandidates, setLocalStream, socket, startConnectionDeadline, updateCallId, updateCallState, updatePeerId]);
 
   useEffect(() => {
     if (!isConnected && callStateRef.current !== 'idle') {

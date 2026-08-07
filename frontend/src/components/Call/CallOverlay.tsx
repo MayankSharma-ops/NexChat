@@ -4,8 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useCall } from '@/context/CallContext';
 import {
   Phone, PhoneOff, Video, VideoOff,
-  Mic, MicOff, SwitchCamera, Volume2, VolumeX,
-  X, PhoneIncoming, Maximize2, Minimize2,
+  Mic, MicOff, SwitchCamera,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 
 function formatDuration(s: number): string {
@@ -17,7 +17,7 @@ function formatDuration(s: number): string {
 export default function CallOverlay() {
   const {
     callState, callType, callError, callDuration,
-    peerName, peerAvatarColor, peerAvatarUrl,
+    peerName, peerAvatarColor,
     isMuted, isVideoOff, isFrontCamera,
     incomingCall, localStream, remoteStream,
     answerCall, rejectCall, endCall,
@@ -349,8 +349,7 @@ export default function CallOverlay() {
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="text-center">
           <PhoneOff size={48} className="text-red-400 mx-auto mb-4" />
-          <p className="text-white/60 text-lg">Call ended</p>
-          {callError && <p className="text-red-400 text-sm mt-2">{callError}</p>}
+          <p className="text-red-300 text-lg">{callError ?? 'Call ended.'}</p>
         </div>
       </div>
     );
