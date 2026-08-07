@@ -21,7 +21,7 @@ const ChatContext = createContext<ChatContextType | null>(null);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { token, user } = useAuth();
-  const { socket, isConnected } = useSocket(token);
+  const { socket, isConnected } = useSocket();
 
   const [friends, setFriends] = useState<Friend[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);

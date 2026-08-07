@@ -47,9 +47,9 @@ initSocket(httpServer);
 
 const PORT = Number(process.env.PORT) || 4000;
 httpServer.listen(PORT, () => {
-  console.log(`\n✅  Backend  →  http://localhost:${PORT}`);
-  console.log(`📋  Health   →  http://localhost:${PORT}/health`);
-  console.log(`🔌  Socket   →  ws://localhost:${PORT}\n`);
+  console.log(`\n  Backend  →  http://localhost:${PORT}`);
+  console.log(`  Health   →  http://localhost:${PORT}/health`);
+  console.log(`  Socket   →  ws://localhost:${PORT}\n`);
 });
 
 export default app;

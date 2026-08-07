@@ -86,7 +86,7 @@ export interface ChatContextType {
   clearError: () => void;
 }
 
-export type CallState = 'idle' | 'calling' | 'ringing' | 'connected' | 'ended';
+export type CallState = 'idle' | 'calling' | 'ringing' | 'connecting' | 'connected' | 'ended';
 
 export interface IncomingCallData {
   callId: string;

@@ -17,11 +17,11 @@ function formatDuration(s: number): string {
 export default function CallOverlay() {
   const {
     callState, callType, callError, callDuration,
-    peerName, peerAvatarColor,
-    isMuted, isVideoOff, isFrontCamera, isSpeakerOn,
+    peerName, peerAvatarColor, peerAvatarUrl,
+    isMuted, isVideoOff, isFrontCamera,
     incomingCall, localStream, remoteStream,
     answerCall, rejectCall, endCall,
-    toggleMute, toggleVideo, flipCamera, toggleSpeaker,
+    toggleMute, toggleVideo, flipCamera,
   } = useCall();
 
   const localVideoRef  = useRef<HTMLVideoElement>(null);
@@ -307,15 +307,6 @@ export default function CallOverlay() {
                   icon={<SwitchCamera size={20} />}
                 />
               )}
-
-              {/* Speaker */}
-              <ControlButton
-                onClick={toggleSpeaker}
-                active={!isSpeakerOn}
-                activeColor="amber"
-                label={isSpeakerOn ? 'Speaker' : 'Earpiece'}
-                icon={isSpeakerOn ? <Volume2 size={20} /> : <VolumeX size={20} />}
-              />
 
               {/* Fullscreen (video only, desktop) */}
               {isVideo && (

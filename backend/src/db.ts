@@ -23,7 +23,7 @@ pool.on('error', (err) => console.error('PG pool error:', err));
 
 // Test connection on startup
 pool.query('SELECT NOW()')
-  .then(() => console.log('✅ Database connected'))
-  .catch((err) => console.error('❌ Database connection failed:', err.message));
+  .then(() => console.log('Database connected'))
+  .catch((err) => console.error('Database connection failed:', err.message));
 
 export default pool;

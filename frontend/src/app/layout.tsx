@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/context/AuthContext';
+import { SocketProvider } from '@/lib/useSocket';
 import { ChatProvider } from '@/context/ChatContext';
 import { CallProvider } from '@/context/CallContext';
 import CallOverlay from '@/components/Call/CallOverlay';
@@ -32,12 +33,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen bg-surface text-white antialiased">
         <AuthProvider>
-          <ChatProvider>
-            <CallProvider>
-              {children}
-              <CallOverlay />
-            </CallProvider>
-          </ChatProvider>
+          <SocketProvider>
+            <ChatProvider>
+              <CallProvider>
+                {children}
+                <CallOverlay />
+              </CallProvider>
+            </ChatProvider>
+          </SocketProvider>
         </AuthProvider>
       </body>
     </html>
